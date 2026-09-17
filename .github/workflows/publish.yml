@@ -1,0 +1,48 @@
+# Installed in the PUBLIC binary repository only. Contains no application source.
+name: Publish Windows downloads
+
+on:
+  push:
+    branches: [main]
+    paths: [version.txt]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-windows-downloads
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Publish verified release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(cat version.txt)"
+          [[ "$VERSION" =~ ^build-[1-9][0-9]*$ ]]
+          test -s downloads/bricky-windows-amd64.exe
+          test -s downloads/bricky-windows-arm64.exe
+          # Refuse accidental application source in the public download tree.
+          python3 - <<'PY'
+          import subprocess
+          allowed = {'README.md', '.github/workflows/publish.yml', 'version.txt', 'downloads/bricky-windows-amd64.exe', 'downloads/bricky-windows-arm64.exe'}
+          files = set(subprocess.check_output(['git', 'ls-files'], text=True).splitlines())
+          assert files <= allowed, 'Unexpected files in binary distribution repository'
+          PY
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            test "$(gh release view "$VERSION" --json isDraft --jq '.isDraft')" = true || exit 0
+          else
+            gh release create "$VERSION" --target "$GITHUB_SHA" --draft --title "Bricky $VERSION" --notes 'Windows x64 and ARM64 downloads. Updates are checked only when Bricky starts.'
+          fi
+          gh release upload "$VERSION" downloads/bricky-windows-amd64.exe downloads/bricky-windows-arm64.exe --clobber
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq '[.assets[] | select(.digest != null and (.digest | startswith("sha256:")))] | length' | python3 -c 'import sys; assert int(sys.stdin.read()) == 2, "Missing asset digests"'
+          gh release edit "$VERSION" --draft=false --latest
