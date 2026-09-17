@@ -44,5 +44,8 @@ jobs:
             gh release create "$VERSION" --target "$GITHUB_SHA" --draft --title "Bricky $VERSION" --notes 'Windows x64 and ARM64 downloads. Updates are checked only when Bricky starts.'
           fi
           gh release upload "$VERSION" downloads/bricky-windows-amd64.exe downloads/bricky-windows-arm64.exe --clobber
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq '[.assets[] | select(.digest != null and (.digest | startswith("sha256:")))] | length' | python3 -c 'import sys; assert int(sys.stdin.read()) == 2, "Missing asset digests"'
+          # Draft releases have no published tag yet; look up their release ID.
+          RELEASE_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$VERSION\") | .id")"
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '[.assets[] | select(.digest != null and (.digest | startswith("sha256:")))] | length' | python3 -c 'import sys; assert int(sys.stdin.read()) == 2, "Missing asset digests"'
           gh release edit "$VERSION" --draft=false --latest
